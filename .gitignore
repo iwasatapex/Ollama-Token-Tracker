@@ -1,0 +1,32 @@
+# Dependencies
+**/node_modules/
+
+# Package manager and test output
+.npm/
+coverage/
+dist/
+out/
+
+# Local extension/runtime state
+.ollama-token-tracker/
+
+# Generated extension packages
+*.vsix
+
+# Logs and local runtime output
+*.log
+npm-debug.log*
+npm-error.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS and editor files
+.DS_Store
+Thumbs.db
+.vscode/*.code-workspace
+
+# Local environment files
+.env
+.env.*
+!.env.example
