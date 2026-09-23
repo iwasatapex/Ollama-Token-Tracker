@@ -56,9 +56,10 @@ async function main() {
   const stateSnapshots = [];
   core.onStateChange((s) => stateSnapshots.push(JSON.parse(JSON.stringify(s))));
 
-  const proxyPort = 39481; // arbitrary free-ish test port
+  const proxyPort = 0; // OS-assigned ephemeral port to avoid collisions with lingering listeners
   await core.start(proxyPort, `http://127.0.0.1:${mockPort}`);
-  console.log(`proxy listening on 127.0.0.1:${proxyPort}`);
+  const proxyPortNum = core.server.address().port;
+  console.log(`proxy listening on 127.0.0.1:${proxyPortNum}`);
 
   // --- 1. model poll should detect the loaded model ---
   await new Promise((resolve) => {
@@ -78,7 +79,7 @@ async function main() {
     const req = http.request(
       {
         hostname: "127.0.0.1",
-        port: proxyPort,
+        port: proxyPortNum,
         path: "/api/generate?stream=true",
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -102,8 +103,8 @@ async function main() {
     console.log("  FAIL - " + e.message);
   }
 
-  // give the internal 'end' handler a tick to fire after res.end()
-  await new Promise((r) => setTimeout(r, 20));
+  // give the internal 'end' handler time to fire after res.end()
+  await new Promise((r) => setTimeout(r, 100));
 
   try {
     assert.strictEqual(core.state.isGenerating, false, "isGenerating should be false again after completion");
@@ -129,15 +130,23 @@ async function main() {
 
   // --- 4. now kill the mock Ollama and confirm the proxy reports an error rather than hanging/pretending ---
   await new Promise((resolve) => mockOllama.close(resolve));
+  core.stop();
+  const errorCore = new OllamaProxyCore({ log, requestTimeoutMs: 1000 });
+  await errorCore.start(0, `http://127.0.0.1:${mockPort}`);
+  const errorProxyPort = errorCore.server.address().port;
   const errResult = await new Promise((resolve) => {
     const req = http.request(
-      { hostname: "127.0.0.1", port: proxyPort, path: "/api/generate", method: "POST" },
+      { hostname: "127.0.0.1", port: errorProxyPort, path: "/api/generate", method: "POST" },
       (res) => {
         let body = "";
         res.on("data", (c) => (body += c));
         res.on("end", () => resolve({ status: res.statusCode, body }));
       }
     );
+    req.setTimeout(3000, () => {
+      req.destroy();
+      resolve({ status: null, body: null });
+    });
     req.on("error", () => resolve({ status: null, body: null }));
     req.end();
   });
@@ -149,7 +158,7 @@ async function main() {
     console.log("  FAIL - " + e.message);
   }
 
-  core.stop();
+  errorCore.stop();
   console.log(`\n${failed === 0 ? "ALL GOOD" : failed + " FAILURE(S)"}`);
   process.exit(failed > 0 ? 1 : 0);
 }

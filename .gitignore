@@ -30,3 +30,5 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+.vscode/settings.json
+.kilo/agents/data.md

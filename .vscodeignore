@@ -1,5 +1,7 @@
 icon-build/**
+.kilo/**
 .vscode/**
+test/**
 .vscodeignore
 **/*.map
 **/.DS_Store

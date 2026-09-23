@@ -18,11 +18,11 @@
 				
 				<Property Id="Microsoft.VisualStudio.Code.ExecutesCode" Value="true" />
 				
-				<Property Id="Microsoft.VisualStudio.Services.Links.Source" Value="https://github.com/example/ollama-token-tracker.git" />
-				<Property Id="Microsoft.VisualStudio.Services.Links.Getstarted" Value="https://github.com/example/ollama-token-tracker.git" />
-				<Property Id="Microsoft.VisualStudio.Services.Links.GitHub" Value="https://github.com/example/ollama-token-tracker.git" />
-				<Property Id="Microsoft.VisualStudio.Services.Links.Support" Value="https://github.com/example/ollama-token-tracker/issues" />
-				<Property Id="Microsoft.VisualStudio.Services.Links.Learn" Value="https://github.com/example/ollama-token-tracker#readme" />
+				<Property Id="Microsoft.VisualStudio.Services.Links.Source" Value="https://github.com/iwasatapex/Ollama-Token-Tracker.git" />
+				<Property Id="Microsoft.VisualStudio.Services.Links.Getstarted" Value="https://github.com/iwasatapex/Ollama-Token-Tracker.git" />
+				<Property Id="Microsoft.VisualStudio.Services.Links.GitHub" Value="https://github.com/iwasatapex/Ollama-Token-Tracker.git" />
+				<Property Id="Microsoft.VisualStudio.Services.Links.Support" Value="https://github.com/iwasatapex/Ollama-Token-Tracker/issues" />
+				<Property Id="Microsoft.VisualStudio.Services.Links.Learn" Value="https://github.com/iwasatapex/Ollama-Token-Tracker#readme" />
 				<Property Id="Microsoft.VisualStudio.Services.Branding.Color" Value="#1e1e1e" />
 				<Property Id="Microsoft.VisualStudio.Services.Branding.Theme" Value="dark" />
 				<Property Id="Microsoft.VisualStudio.Services.GitHubFlavoredMarkdown" Value="true" />
