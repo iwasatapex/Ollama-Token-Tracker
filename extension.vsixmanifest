@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 	<PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
 		<Metadata>
-			<Identity Language="en-US" Id="ollama-token-tracker" Version="5.1.0" Publisher="local-user" />
+			<Identity Language="en-US" Id="ollama-token-tracker" Version="5.1.0" Publisher="4m4teur" />
 			<DisplayName>Ollama Token Tracker</DisplayName>
 			<Description xml:space="preserve">Ollama token tracker with reliable status-bar icon and accurate final token statistics.</Description>
 			<Tags></Tags>

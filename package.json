@@ -3,7 +3,7 @@
   "displayName": "Ollama Token Tracker",
   "description": "Ollama token tracker with reliable status-bar icon and accurate final token statistics.",
   "version": "5.1.0",
-  "publisher": "local-user",
+  "publisher": "4m4teur",
   "license": "MIT",
   "repository": {
     "type": "git",
