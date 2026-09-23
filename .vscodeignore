@@ -1,0 +1,6 @@
+icon-build/**
+.vscode/**
+.vscodeignore
+**/*.map
+**/.DS_Store
+!setup-universal-ollama.sh

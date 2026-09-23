@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Ollama Token Tracker icon">
+  <path fill="currentColor" fill-rule="evenodd" d="
+    M64 10
+    C78 10 91 15 101 25
+    L116 38
+    L108 52
+    Q108 77 94 94
+    L86 108
+    L64 118
+    L42 108
+    L34 94
+    Q20 77 20 52
+    L12 38
+    L27 25
+    C37 15 50 10 64 10
+    Z
+    M31 28
+    L44 13
+    L58 31
+    L43 38
+    Z
+    M97 28
+    L84 13
+    L70 31
+    L85 38
+    Z
+    M40 48
+    A10 10 0 1 1 40 68
+    A10 10 0 1 1 40 48
+    Z
+    M88 48
+    A10 10 0 1 1 88 68
+    A10 10 0 1 1 88 48
+    Z
+    M43 82
+    Q53 94 64 94
+    Q75 94 85 82
+    L77 91
+    Q71 100 64 100
+    Q57 100 51 91
+    Z
+  "/>
+</svg>

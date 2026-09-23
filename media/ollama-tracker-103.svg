@@ -1,0 +1,16 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd" >
+<svg xmlns="http://www.w3.org/2000/svg">
+<metadata>[object Object]</metadata>
+<defs>
+  <font id="ollama-tracker" horiz-adv-x="1024">
+    <font-face font-family="ollama-tracker"
+      units-per-em="1024" ascent="1024"
+      descent="0" />
+    <missing-glyph horiz-adv-x="0" />
+    <glyph glyph-name="ollama-tracker"
+      unicode="&#xF102;"
+      horiz-adv-x="1024" d="M512 944C624 944 728 904 808 824L928 720L864 608Q864 408 752 272L688 160L512 80L336 160L272 272Q160 408 160 608L96 720L216 824C296 904 400 944 512 944zM248 800L352 920L464 776L344 720zM776 800L672 920L560 776L680 720zM320 640A80 80 0 1 0 320 480A80 80 0 1 0 320 640zM704 640A80 80 0 1 0 704 480A80 80 0 1 0 704 640zM344 368Q424 272 512 272Q600 272 680 368L616 296Q568 224 512 224Q456 224 408 296z" />
+  </font>
+</defs>
+</svg>

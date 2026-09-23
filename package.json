@@ -1,0 +1,85 @@
+{
+  "name": "ollama-token-tracker",
+  "displayName": "Ollama Token Tracker",
+  "description": "Ollama token tracker with reliable status-bar icon and accurate final token statistics.",
+  "version": "5.1.0",
+  "publisher": "local-user",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/example/ollama-token-tracker"
+  },
+  "icon": "media/icon.png",
+  "galleryBanner": {
+    "color": "#1e1e1e",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./extension.js",
+  "scripts": {
+    "test": "node test/test-stream-parser.js && node test/test-e2e-proxy.js && node test/test-extension-render.js",
+    "build:icon": "node icon-build/build-font.js"
+  },
+  "devDependencies": {
+    "sharp": "^0.35.4",
+    "svg2ttf": "^6.1.0",
+    "svgicons2svgfont": "^16.0.0",
+    "ttf2woff": "^3.0.0"
+  },
+  "contributes": {
+    "icons": {
+      "ollama-tracker": {
+        "description": "Original single-color llama-face glyph used for the Ollama Token Tracker status bar item.",
+        "default": {
+          "fontPath": "./media/ollama-tracker-103.woff",
+          "fontCharacter": "\\f102"
+        }
+      }
+    },
+    "configuration": {
+      "title": "Ollama Token Tracker",
+      "properties": {
+        "ollamaTokenTracker.proxyPort": {
+          "type": "number",
+          "default": 11434,
+          "description": "Port this extension proxy listens on. The universal setup uses Ollama's standard port so all clients are tracked."
+        },
+        "ollamaTokenTracker.ollamaUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:11435",
+          "description": "URL where the real Ollama server is listening behind the proxy. Default universal backend: http://127.0.0.1:11435."
+        }
+      }
+    },
+    "commands": [
+      {
+        "command": "ollamaTokenTracker.restartProxy",
+        "title": "Ollama Token Tracker: Restart Proxy"
+      },
+      {
+        "command": "ollamaTokenTracker.pointCopilotAtProxy",
+        "title": "Ollama Token Tracker: Point Copilot Chat at This Proxy"
+      },
+      {
+        "command": "ollamaTokenTracker.showProxyUrl",
+        "title": "Ollama Token Tracker: Show Proxy URL (for Cline, Continue, aider, etc.)"
+      },
+      {
+        "command": "ollamaTokenTracker.showDiagnostics",
+        "title": "Ollama Token Tracker: Show Diagnostics (version, install path, duplicate installs)"
+      },
+      {
+        "command": "ollamaTokenTracker.runSetupCheck",
+        "title": "Ollama Token Tracker: Run Setup Check (proxy/backend reachability)"
+      }
+    ]
+  }
+}
