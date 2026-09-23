@@ -1,7 +1,7 @@
 # Ollama Token Tracker
 
-![The status bar item sitting next to VS Code's built-in status icons](media/screenshot-statusbar.png)
-![The three icon states: generating (green), model loaded (yellow), no model / error (red)](media/screenshot-icon-states.png)
+![The status bar item sitting next to VS Code's built-in status icons](https://github.com/iwasatapex/Ollama-Token-Tracker/raw/HEAD/media/screenshot-statusbar.png)
+![The three icon states: generating (green), model loaded (yellow), no model / error (red)](https://github.com/iwasatapex/Ollama-Token-Tracker/raw/HEAD/media/screenshot-icon-states.png)
 
 A small, standalone VS Code / VSCodium extension. It puts a compact,
 color-coded llama face in the status bar (bottom right) and reports the
