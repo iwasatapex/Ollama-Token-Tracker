@@ -43,7 +43,8 @@ out.on('finish', () => {
   fs.writeFileSync(svgFontPath, replaced, 'utf8');
 
   const ttf = execFileSync('npx', ['svg2ttf', svgFontPath, ttfPath], { stdio: 'inherit' });
-  if (ttf) {}
+  if (ttf) {
+  }
 
   execFileSync('npx', ['ttf2woff', ttfPath, woffPath], { stdio: 'inherit' });
   console.log(`Generated ${woffPath}`);

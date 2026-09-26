@@ -1,7 +1,11 @@
-"use strict";
-const http = require("http");
-const https = require("https");
-const { OllamaStreamParser, extractFinalStats, estimateResponseTokens } = require("./ollama-stream-parser.js");
+'use strict';
+const http = require('http');
+const https = require('https');
+const {
+  OllamaStreamParser,
+  extractFinalStats,
+  estimateResponseTokens,
+} = require('./ollama-stream-parser.js');
 
 /**
  * All of the network/state logic that used to live inline in extension.js,
@@ -17,7 +21,11 @@ class OllamaProxyCore {
     this.requestTimeoutMs = requestTimeoutMs;
     this.maxSockets = maxSockets;
     this._agent = this._createAgent();
-    this._httpsAgent = new https.Agent({ keepAlive: true, maxSockets: this.maxSockets, maxFreeSockets: 10 });
+    this._httpsAgent = new https.Agent({
+      keepAlive: true,
+      maxSockets: this.maxSockets,
+      maxFreeSockets: 10,
+    });
     this.server = null;
     this.pollTimer = null;
 
@@ -57,7 +65,7 @@ class OllamaProxyCore {
       try {
         target = new URL(ollamaUrl);
       } catch (e) {
-        this.state.lastError = { text: "bad URL", detail: `Invalid ollamaUrl: ${ollamaUrl}` };
+        this.state.lastError = { text: 'bad URL', detail: `Invalid ollamaUrl: ${ollamaUrl}` };
         this._emit();
         reject(e);
         return;
@@ -65,16 +73,16 @@ class OllamaProxyCore {
 
       this.server = http.createServer((req, res) => this._handleRequest(req, res, target));
 
-      this.server.on("error", (err) => {
+      this.server.on('error', (err) => {
         this.state.lastError = {
-          text: "port busy",
+          text: 'port busy',
           detail: `Could not listen on port ${proxyPort}: ${err.message}`,
         };
         this._emit();
         reject(err);
       });
 
-      this.server.listen(proxyPort, "127.0.0.1", () => {
+      this.server.listen(proxyPort, '127.0.0.1', () => {
         this.state.lastError = null;
         this._emit();
         this.log(`proxy listening on 127.0.0.1:${proxyPort}, forwarding to ${ollamaUrl}`);
@@ -122,21 +130,22 @@ class OllamaProxyCore {
     const forwardHeaders = { ...req.headers };
     delete forwardHeaders.host;
     delete forwardHeaders.connection;
-    delete forwardHeaders["transfer-encoding"];
+    delete forwardHeaders['transfer-encoding'];
 
-    const requestPath = new URL(req.url, "http://127.0.0.1");
-    const requestModule = target.protocol === "https:" ? https : http;
+    const requestPath = new URL(req.url, 'http://127.0.0.1');
+    const requestModule = target.protocol === 'https:' ? https : http;
     const options = {
       hostname: target.hostname,
-      port: target.port || (target.protocol === "https:" ? 443 : 80),
+      port: target.port || (target.protocol === 'https:' ? 443 : 80),
       path: requestPath.pathname + requestPath.search,
       method: req.method,
       headers: forwardHeaders,
-      agent: target.protocol === "https:" ? this._httpsAgent : this._ensureAgent(),
+      agent: target.protocol === 'https:' ? this._httpsAgent : this._ensureAgent(),
     };
 
-    const isGenEndpoint = requestPath.pathname === "/api/generate" || requestPath.pathname === "/api/chat";
-    this.log(`proxying ${req.method} ${req.url}${isGenEndpoint ? " (generation endpoint)" : ""}`);
+    const isGenEndpoint =
+      requestPath.pathname === '/api/generate' || requestPath.pathname === '/api/chat';
+    this.log(`proxying ${req.method} ${req.url}${isGenEndpoint ? ' (generation endpoint)' : ''}`);
 
     const proxyReq = requestModule.request(options, (proxyRes) => {
       // Same reasoning as the request side: the proxy is byte-transparent so
@@ -144,7 +153,7 @@ class OllamaProxyCore {
       // or Node re-chunks an already-chunked upstream body.
       const responseHeaders = { ...proxyRes.headers };
       delete responseHeaders.connection;
-      delete responseHeaders["transfer-encoding"];
+      delete responseHeaders['transfer-encoding'];
       res.writeHead(proxyRes.statusCode || 502, responseHeaders);
 
       let parser = null;
@@ -156,19 +165,19 @@ class OllamaProxyCore {
           (obj) => this._onDoneObject(obj),
           (obj) => {
             if (!obj.done) this.state.currentGen.tokens += estimateResponseTokens(obj);
-          }
+          },
         );
       }
 
-      proxyRes.on("data", (chunk) => {
+      proxyRes.on('data', (chunk) => {
         if (!res.write(chunk)) proxyRes.pause();
         if (!parser) return;
-        parser.push(chunk.toString("utf8"));
+        parser.push(chunk.toString('utf8'));
       });
 
-      res.on("drain", () => proxyRes.resume());
+      res.on('drain', () => proxyRes.resume());
 
-      proxyRes.on("end", () => {
+      proxyRes.on('end', () => {
         if (parser) parser.end();
         res.end();
         if (isGenEndpoint) {
@@ -177,14 +186,14 @@ class OllamaProxyCore {
         }
       });
 
-      proxyRes.on("error", (err) => {
+      proxyRes.on('error', (err) => {
         proxyReq.destroy(err);
       });
     });
 
     proxyReq.setTimeout(this.requestTimeoutMs, () => {
       const timeoutError = new Error(`upstream request timed out after ${this.requestTimeoutMs}ms`);
-      timeoutError.code = "ETIMEDOUT";
+      timeoutError.code = 'ETIMEDOUT';
       proxyReq.destroy(timeoutError);
     });
 
@@ -194,23 +203,23 @@ class OllamaProxyCore {
       requestFinished = true;
       proxyReq.destroy();
     };
-    req.on("aborted", cancelUpstream);
-    req.on("error", cancelUpstream);
-    res.on("close", cancelUpstream);
+    req.on('aborted', cancelUpstream);
+    req.on('error', cancelUpstream);
+    res.on('close', cancelUpstream);
 
-    proxyReq.on("error", (err) => {
+    proxyReq.on('error', (err) => {
       requestFinished = true;
       if (req.destroyed || res.destroyed) return;
       this.state.isGenerating = false;
-      this.state.lastError = { text: "proxy error", detail: err.message };
+      this.state.lastError = { text: 'proxy error', detail: err.message };
       this._emit();
       if (!res.headersSent) {
-        res.writeHead(502, { "Content-Type": "text/plain" });
+        res.writeHead(502, { 'Content-Type': 'text/plain' });
       }
-      res.end("Ollama Token Tracker proxy error: " + err.message);
+      res.end('Ollama Token Tracker proxy error: ' + err.message);
     });
 
-    proxyReq.on("close", () => {
+    proxyReq.on('close', () => {
       requestFinished = true;
     });
 
@@ -220,12 +229,12 @@ class OllamaProxyCore {
   _onDoneObject(obj) {
     const stats = extractFinalStats(obj);
     if (!stats) {
-      this.log("done object seen but had no usable eval_count/eval_duration; not recording stats");
+      this.log('done object seen but had no usable eval_count/eval_duration; not recording stats');
       return;
     }
     this.state.lastFinal = { ...stats, finishedAt: Date.now() };
     this.log(
-      `generation finished: ${stats.outputTokens} output tokens, ${stats.promptTokens} prompt tokens, ${stats.tokensPerSec.toFixed(1)} tok/s, model=${stats.model}`
+      `generation finished: ${stats.outputTokens} output tokens, ${stats.promptTokens} prompt tokens, ${stats.tokensPerSec.toFixed(1)} tok/s, model=${stats.model}`,
     );
     this._emit();
   }
@@ -243,20 +252,20 @@ class OllamaProxyCore {
     } catch (e) {
       return;
     }
-    const requestModule = target.protocol === "https:" ? https : http;
+    const requestModule = target.protocol === 'https:' ? https : http;
     const req = requestModule.request(
       {
         hostname: target.hostname,
-        port: target.port || (target.protocol === "https:" ? 443 : 80),
-        path: "/api/ps",
-        method: "GET",
+        port: target.port || (target.protocol === 'https:' ? 443 : 80),
+        path: '/api/ps',
+        method: 'GET',
         timeout: 1500,
-        agent: target.protocol === "https:" ? this._httpsAgent : this._ensureAgent(),
+        agent: target.protocol === 'https:' ? this._httpsAgent : this._ensureAgent(),
       },
       (res) => {
-        let body = "";
-        res.on("data", (c) => (body += c));
-        res.on("end", () => {
+        let body = '';
+        res.on('data', (c) => (body += c));
+        res.on('end', () => {
           try {
             const parsed = JSON.parse(body);
             const models = Array.isArray(parsed.models) ? parsed.models : [];
@@ -276,10 +285,10 @@ class OllamaProxyCore {
             this._emit();
           }
         });
-      }
+      },
     );
-    req.on("timeout", () => req.destroy());
-    req.on("error", () => {
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => {
       this.state.hasLoadedModel = false;
       this.state.loadedModels = [];
       this._emit();

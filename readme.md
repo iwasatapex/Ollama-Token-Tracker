@@ -17,16 +17,16 @@ color-coded llama face in the status bar (bottom right) and reports the
 
 On activation the extension starts a small HTTP proxy:
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `ollamaTokenTracker.proxyPort` | `11434` | Port the proxy listens on (`127.0.0.1` only). |
+| Setting                        | Default                  | Meaning                                                 |
+| ------------------------------ | ------------------------ | ------------------------------------------------------- |
+| `ollamaTokenTracker.proxyPort` | `11434`                  | Port the proxy listens on (`127.0.0.1` only).           |
 | `ollamaTokenTracker.ollamaUrl` | `http://127.0.0.1:11435` | Where your real Ollama server listens behind the proxy. |
 
 The proxy forwards every request to `ollamaUrl` untouched. For `/api/generate`
 and `/api/chat` it additionally watches the streamed response as it passes
 through:
 
-- **While generating**, the tooltip shows a live *chunks per second* estimate.
+- **While generating**, the tooltip shows a live _chunks per second_ estimate.
   It is explicitly labelled as an estimate and is never presented as a token
   count.
 - **When Ollama sends `done: true`**, the extension reads Ollama's own
@@ -58,19 +58,19 @@ at `http://127.0.0.1:11436`:
 - **Anything with a configurable Ollama base URL** (Cline, Continue, aider,
   Open WebUI, a `curl` script, an SDK, ...) — run **"Ollama Token Tracker: Show
   Proxy URL"** and point that client at it.
-Run **"Ollama Token Tracker: Run Setup Check"** at any time — it probes the
-proxy, the configured backend, and Ollama's usual default port, and prints a
-plain-English report to the Output panel.
+  Run **"Ollama Token Tracker: Run Setup Check"** at any time — it probes the
+  proxy, the configured backend, and Ollama's usual default port, and prints a
+  plain-English report to the Output panel.
 
 ## Commands
 
-| Command | What it does |
-| --- | --- |
-| **Restart Proxy** | Restarts the proxy after a settings change. |
-| **Point Copilot Chat at This Proxy** | Writes Copilot Chat's Ollama endpoint setting. Needs a window reload. |
-| **Show Proxy URL** | Shows/copies the proxy address, for Cline, Continue, aider, etc. |
-| **Show Diagnostics** | Running version, install path, duplicate-install detection, and live state. |
-| **Run Setup Check** | Proxy/backend reachability report in the Output panel. |
+| Command                              | What it does                                                                |
+| ------------------------------------ | --------------------------------------------------------------------------- |
+| **Restart Proxy**                    | Restarts the proxy after a settings change.                                 |
+| **Point Copilot Chat at This Proxy** | Writes Copilot Chat's Ollama endpoint setting. Needs a window reload.       |
+| **Show Proxy URL**                   | Shows/copies the proxy address, for Cline, Continue, aider, etc.            |
+| **Show Diagnostics**                 | Running version, install path, duplicate-install detection, and live state. |
+| **Run Setup Check**                  | Proxy/backend reachability report in the Output panel.                      |
 
 ## Settings
 
@@ -166,4 +166,3 @@ structured feedback from your actual environment.
 
 - Established the icon-only status bar presentation and the red/yellow/green
   state colors.
-

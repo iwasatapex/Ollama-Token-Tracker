@@ -1,4 +1,4 @@
-"use strict";
+'use strict';
 // Pure parsing logic, factored out so it can be unit-tested outside of
 // VS Code (no `vscode` import in this file). extension.js wires this into
 // the real HTTP proxy and into the status bar.
@@ -15,7 +15,7 @@
  */
 class OllamaStreamParser {
   constructor(onDone, onObject = null) {
-    this.buffer = "";
+    this.buffer = '';
     this.onDone = onDone; // called with the parsed done object
     this.onObject = onObject;
     this.sawDone = false;
@@ -23,10 +23,10 @@ class OllamaStreamParser {
 
   push(chunkStr) {
     this.buffer += chunkStr;
-    const lines = this.buffer.split("\n");
+    const lines = this.buffer.split('\n');
     // The last element may be a partial line (no trailing \n yet) — keep
     // it in the buffer for the next push/end.
-    this.buffer = lines.pop() || "";
+    this.buffer = lines.pop() || '';
     for (const line of lines) {
       this._tryParseLine(line);
     }
@@ -38,7 +38,7 @@ class OllamaStreamParser {
   end() {
     if (this.buffer.trim()) {
       this._tryParseLine(this.buffer);
-      this.buffer = "";
+      this.buffer = '';
     }
   }
 
@@ -69,11 +69,11 @@ class OllamaStreamParser {
 
 function estimateResponseTokens(obj) {
   const text =
-    typeof obj.response === "string"
+    typeof obj.response === 'string'
       ? obj.response
-      : obj.message && typeof obj.message.content === "string"
+      : obj.message && typeof obj.message.content === 'string'
         ? obj.message.content
-        : "";
+        : '';
   if (!text) return 0;
   return Math.max(1, Math.ceil(Array.from(text).length / 4));
 }
@@ -87,8 +87,8 @@ function estimateResponseTokens(obj) {
  */
 function extractFinalStats(obj) {
   if (
-    typeof obj.eval_count !== "number" ||
-    typeof obj.eval_duration !== "number" ||
+    typeof obj.eval_count !== 'number' ||
+    typeof obj.eval_duration !== 'number' ||
     obj.eval_duration <= 0
   ) {
     return null;
@@ -96,15 +96,12 @@ function extractFinalStats(obj) {
   const tps = obj.eval_count / (obj.eval_duration / 1e9);
   return {
     outputTokens: obj.eval_count,
-    promptTokens:
-      typeof obj.prompt_eval_count === "number" ? obj.prompt_eval_count : 0,
+    promptTokens: typeof obj.prompt_eval_count === 'number' ? obj.prompt_eval_count : 0,
     evalDurationSec: obj.eval_duration / 1e9,
     promptEvalDurationSec:
-      typeof obj.prompt_eval_duration === "number"
-        ? obj.prompt_eval_duration / 1e9
-        : null,
+      typeof obj.prompt_eval_duration === 'number' ? obj.prompt_eval_duration / 1e9 : null,
     tokensPerSec: tps,
-    model: typeof obj.model === "string" ? obj.model : "unknown",
+    model: typeof obj.model === 'string' ? obj.model : 'unknown',
   };
 }
 
