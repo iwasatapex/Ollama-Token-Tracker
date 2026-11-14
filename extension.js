@@ -4,13 +4,14 @@ const http = require('http');
 const { OllamaProxyCore } = require('./ollama-proxy-core.js');
 const { buildStatusMarkdown, formatBytes, formatProcessor } = require('./status-tooltip.js');
 
-const EXT_ID = 'local-user.ollama-token-tracker';
+const EXT_ID = '4m4teur.ollama-token-tracker';
 
 let statusBarItem;
 let renderInterval;
 let core;
 let outputChannel;
 let extensionVersion = 'unknown';
+let lastRenderKey = null;
 
 const COLOR_NO_MODEL = '#f14c4c';
 const COLOR_MODEL_LOADED = '#cca700';
@@ -52,8 +53,8 @@ function markdownTooltip(params) {
   return tooltip;
 }
 
-function render() {
-  if (!statusBarItem || !core) return;
+// Fills `next` ({ text, tooltip, color }) for the current proxy state.
+function computeStatus(next) {
   const s = core.state;
   const now = Date.now();
 
@@ -65,8 +66,8 @@ function render() {
   const context = model.context_length ?? model.context ?? '—';
 
   if (s.lastError) {
-    statusBarItem.text = ICON;
-    statusBarItem.tooltip = markdownTooltip({
+    next.text = ICON;
+    next.tooltip = {
       status: 'Error',
       model: modelName,
       size,
@@ -74,16 +75,16 @@ function render() {
       processor,
       context,
       note: `${s.lastError.text}: ${s.lastError.detail}`,
-    });
-    statusBarItem.color = COLOR_NO_MODEL;
+    };
+    next.color = COLOR_NO_MODEL;
     return;
   }
 
   if (s.isGenerating) {
     const elapsedSec = (now - s.currentGen.startedAt) / 1000;
     const liveTps = elapsedSec > 0 ? (s.currentGen.tokens / elapsedSec).toFixed(1) : '0.0';
-    statusBarItem.text = `${ICON} ~${s.currentGen.tokens} tok`;
-    statusBarItem.tooltip = markdownTooltip({
+    next.text = `${ICON} ~${s.currentGen.tokens} tok`;
+    next.tooltip = {
       status: 'Generating',
       model: modelName,
       size,
@@ -91,15 +92,15 @@ function render() {
       processor,
       context,
       note: `Live estimate: ~${liveTps} tok/s (estimated from streamed text; exact count shown when done).`,
-    });
-    statusBarItem.color = COLOR_GENERATING;
+    };
+    next.color = COLOR_GENERATING;
     return;
   }
 
   if (s.lastFinal && now - s.lastFinal.finishedAt < 5 * 60 * 1000) {
     const f = s.lastFinal;
-    statusBarItem.text = `${ICON} ${f.outputTokens} out / ${f.promptTokens} in`;
-    statusBarItem.tooltip = markdownTooltip({
+    next.text = `${ICON} ${f.outputTokens} out / ${f.promptTokens} in`;
+    next.tooltip = {
       status: 'Ready',
       model: f.model || modelName,
       size,
@@ -107,14 +108,14 @@ function render() {
       processor,
       context,
       note: `Last generation: ${f.outputTokens} output tokens • ${f.promptTokens} prompt tokens • ${f.tokensPerSec.toFixed(1)} tok/s`,
-    });
-    statusBarItem.color = s.hasLoadedModel ? COLOR_MODEL_LOADED : COLOR_NO_MODEL;
+    };
+    next.color = s.hasLoadedModel ? COLOR_MODEL_LOADED : COLOR_NO_MODEL;
     return;
   }
 
   if (s.hasLoadedModel) {
-    statusBarItem.text = ICON;
-    statusBarItem.tooltip = markdownTooltip({
+    next.text = ICON;
+    next.tooltip = {
       status: 'Ready',
       model: modelName,
       size,
@@ -122,13 +123,13 @@ function render() {
       processor,
       context,
       note: 'No generation has been observed through the proxy yet — token stats will appear here once a request goes through it.',
-    });
-    statusBarItem.color = COLOR_MODEL_LOADED;
+    };
+    next.color = COLOR_MODEL_LOADED;
     return;
   }
 
-  statusBarItem.text = ICON;
-  statusBarItem.tooltip = markdownTooltip({
+  next.text = ICON;
+  next.tooltip = {
     status: 'No model loaded',
     model: '—',
     size: '—',
@@ -136,8 +137,23 @@ function render() {
     processor: '—',
     context: '—',
     note: 'No model is currently loaded in Ollama.',
-  });
-  statusBarItem.color = COLOR_NO_MODEL;
+  };
+  next.color = COLOR_NO_MODEL;
+}
+
+// render() runs every 500 ms and on every proxy state change. Only touch the
+// StatusBarItem when what it shows actually changed: each assignment is an
+// IPC round-trip to the renderer, and while idle nothing changes for hours.
+function render() {
+  if (!statusBarItem || !core) return;
+  const next = {};
+  computeStatus(next);
+  const key = JSON.stringify(next);
+  if (key === lastRenderKey) return;
+  lastRenderKey = key;
+  statusBarItem.text = next.text;
+  statusBarItem.tooltip = markdownTooltip(next.tooltip);
+  statusBarItem.color = next.color;
 }
 
 function startRenderLoop() {
@@ -160,6 +176,7 @@ function activate(context) {
   statusBarItem.name = 'Ollama Token Tracker';
   statusBarItem.accessibilityInformation = { role: 'status', label: 'Ollama generation status' };
   statusBarItem.show();
+  lastRenderKey = null;
   context.subscriptions.push(statusBarItem);
 
   core = new OllamaProxyCore({ log });

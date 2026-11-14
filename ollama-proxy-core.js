@@ -16,7 +16,11 @@ const {
  * instance.
  */
 class OllamaProxyCore {
-  constructor({ log, requestTimeoutMs = 120000, maxSockets = 50 } = {}) {
+  // requestTimeoutMs is an *idle* timeout on the upstream socket. Ollama sends
+  // nothing while it loads a model or processes a long prompt, which on large
+  // partially-offloaded models regularly exceeds two minutes, so the default
+  // has to be generous or the proxy aborts requests Ollama would have answered.
+  constructor({ log, requestTimeoutMs = 600000, maxSockets = 50 } = {}) {
     this.log = log || (() => {});
     this.requestTimeoutMs = requestTimeoutMs;
     this.maxSockets = maxSockets;
@@ -164,7 +168,12 @@ class OllamaProxyCore {
         parser = new OllamaStreamParser(
           (obj) => this._onDoneObject(obj),
           (obj) => {
-            if (!obj.done) this.state.currentGen.tokens += estimateResponseTokens(obj);
+            if (!obj.done) {
+              this.state.currentGen.tokens += estimateResponseTokens(obj);
+              // Push each streamed token estimate to the status-bar renderer
+              // immediately instead of relying only on the periodic render loop.
+              this._emit();
+            }
           },
         );
       }
