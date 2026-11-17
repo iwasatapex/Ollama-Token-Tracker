@@ -158,7 +158,7 @@ structured feedback from your actual environment.
 
 ## Changelog
 
-### Unreleased
+### 5.2.0
 
 Found by testing live against Ollama 0.40.16:
 
