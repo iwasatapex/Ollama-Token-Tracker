@@ -26,7 +26,8 @@
   "main": "./extension.js",
   "scripts": {
     "test": "node test/test-stream-parser.js && node test/test-e2e-proxy.js && node test/test-extension-render.js",
-    "build:icon": "node icon-build/build-font.js"
+    "build:icon": "node icon-build/build-font.js",
+    "check": "node --check extension.js && node --check ollama-proxy-core.js && node --check ollama-stream-parser.js && node --check status-tooltip.js"
   },
   "devDependencies": {
     "sharp": "^0.35.4",
@@ -50,12 +51,16 @@
         "ollamaTokenTracker.proxyPort": {
           "type": "number",
           "default": 11434,
-          "description": "Port this extension proxy listens on. The universal setup uses Ollama's standard port so all clients are tracked."
+          "minimum": 1,
+          "maximum": 65535,
+          "markdownDescription": "Port the tracker's proxy listens on (`127.0.0.1` only). The universal setup uses Ollama's standard port `11434` so every client is tracked. Changes apply immediately."
         },
         "ollamaTokenTracker.ollamaUrl": {
           "type": "string",
           "default": "http://127.0.0.1:11435",
-          "description": "URL where the real Ollama server is listening behind the proxy. Default universal backend: http://127.0.0.1:11435."
+          "pattern": "^https?://.+",
+          "patternErrorMessage": "Must be an http:// or https:// URL, e.g. http://127.0.0.1:11435",
+          "markdownDescription": "URL of the real Ollama server behind the proxy. Must not point at the proxy's own port. Default universal backend: `http://127.0.0.1:11435`. Changes apply immediately."
         }
       }
     },
@@ -79,7 +84,23 @@
       {
         "command": "ollamaTokenTracker.runSetupCheck",
         "title": "Ollama Token Tracker: Run Setup Check (proxy/backend reachability)"
+      },
+      {
+        "command": "ollamaTokenTracker.showMenu",
+        "title": "Ollama Token Tracker: Show Menu"
+      },
+      {
+        "command": "ollamaTokenTracker.showOutput",
+        "title": "Ollama Token Tracker: Show Log"
       }
-    ]
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "ollamaTokenTracker.showMenu",
+          "when": "false"
+        }
+      ]
+    }
   }
 }

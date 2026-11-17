@@ -22,8 +22,15 @@ class OllamaStreamParser {
   }
 
   push(chunkStr) {
-    this.buffer += chunkStr;
-    const lines = this.buffer.split('\n');
+    if (!chunkStr) return;
+    // Fast path: no line terminator in this chunk, so nothing can complete.
+    // Avoids re-splitting an ever-growing buffer on every chunk of a large
+    // non-streamed (`stream:false`) body, which was O(n^2).
+    if (chunkStr.indexOf('\n') === -1) {
+      this.buffer += chunkStr;
+      return;
+    }
+    const lines = (this.buffer + chunkStr).split('\n');
     // The last element may be a partial line (no trailing \n yet) — keep
     // it in the buffer for the next push/end.
     this.buffer = lines.pop() || '';
@@ -67,15 +74,26 @@ class OllamaStreamParser {
   }
 }
 
+function hasText(value) {
+  return typeof value === 'string' && value.length > 0;
+}
+
+/**
+ * Live token estimate for one streamed chunk. Ollama streams one line per
+ * generated token (occasionally fewer, when a token is only part of a
+ * multi-byte character), so counting text-bearing lines tracks eval_count far
+ * better than a characters-per-token guess — that over-counted indented code
+ * by almost 2x against a real Ollama. Reasoning ("thinking") chunks count too:
+ * Ollama's final eval_count includes them.
+ */
 function estimateResponseTokens(obj) {
-  const text =
-    typeof obj.response === 'string'
-      ? obj.response
-      : obj.message && typeof obj.message.content === 'string'
-        ? obj.message.content
-        : '';
-  if (!text) return 0;
-  return Math.max(1, Math.ceil(Array.from(text).length / 4));
+  if (!obj || typeof obj !== 'object') return 0;
+  const message = obj.message && typeof obj.message === 'object' ? obj.message : null;
+  const carriesText =
+    hasText(obj.response) ||
+    hasText(obj.thinking) ||
+    (message && (hasText(message.content) || hasText(message.thinking)));
+  return carriesText ? 1 : 0;
 }
 
 /**
@@ -93,14 +111,40 @@ function extractFinalStats(obj) {
   ) {
     return null;
   }
-  const tps = obj.eval_count / (obj.eval_duration / 1e9);
+  const nsToSec = (v) => (typeof v === 'number' && v > 0 ? v / 1e9 : null);
+  const promptTokens = typeof obj.prompt_eval_count === 'number' ? obj.prompt_eval_count : 0;
+  const promptEvalDurationSec = nsToSec(obj.prompt_eval_duration);
+  // Newer Ollama reports how much of the prompt was reused from its cache.
+  // prompt_eval_count still counts the whole prompt (verified on 0.40.16:
+  // 223 total with 222 cached), so only the uncached part was evaluated.
+  const cachedTokens =
+    typeof obj.prompt_eval_cached_count === 'number' ? obj.prompt_eval_cached_count : null;
+  const evaluatedPromptTokens = Math.max(0, promptTokens - (cachedTokens || 0));
+  // How much of the model's context window this request occupied: the
+  // /api/generate context token array when present, else prompt + output.
+  // The latter is exact when Ollama reports the cached count (its prompt
+  // count is then known to include cached tokens); older versions may have
+  // counted only the evaluated part, so it is marked approximate there.
+  const hasContextArray = Array.isArray(obj.context) && obj.context.length > 0;
   return {
     outputTokens: obj.eval_count,
-    promptTokens: typeof obj.prompt_eval_count === 'number' ? obj.prompt_eval_count : 0,
+    promptTokens,
+    promptCachedTokens: cachedTokens,
+    contextTokens: hasContextArray ? obj.context.length : promptTokens + obj.eval_count,
+    contextExact: hasContextArray || cachedTokens !== null,
     evalDurationSec: obj.eval_duration / 1e9,
-    promptEvalDurationSec:
-      typeof obj.prompt_eval_duration === 'number' ? obj.prompt_eval_duration / 1e9 : null,
-    tokensPerSec: tps,
+    promptEvalDurationSec,
+    loadDurationSec: nsToSec(obj.load_duration),
+    totalDurationSec: nsToSec(obj.total_duration),
+    tokensPerSec: obj.eval_count / (obj.eval_duration / 1e9),
+    // Prompt processing speed over the tokens actually evaluated (dividing
+    // the full prompt by the time spent on a 1-token uncached tail would
+    // report absurd speeds). null when nothing was evaluated.
+    promptTokensPerSec:
+      promptEvalDurationSec && evaluatedPromptTokens > 0
+        ? evaluatedPromptTokens / promptEvalDurationSec
+        : null,
+    doneReason: typeof obj.done_reason === 'string' ? obj.done_reason : null,
     model: typeof obj.model === 'string' ? obj.model : 'unknown',
   };
 }

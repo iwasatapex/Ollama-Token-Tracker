@@ -52,7 +52,8 @@ test('streamed response objects provide a live token estimate', () => {
   p.push('{"message":{"content":"Hi"},"done":false}\n');
   p.end();
   assert.strictEqual(objects.length, 2);
-  assert.strictEqual(estimateResponseTokens(objects[0]), 3);
+  // One per text-bearing streamed line (Ollama streams one token per line).
+  assert.strictEqual(estimateResponseTokens(objects[0]), 1);
   assert.strictEqual(estimateResponseTokens(objects[1]), 1);
 });
 
@@ -140,6 +141,82 @@ test('malformed intermediate line is skipped without crashing later parsing', ()
   p.end();
   assert.ok(captured, 'parser should recover and still catch the real done object');
   assert.strictEqual(captured.eval_count, 3);
+});
+
+test('reasoning ("thinking") chunks count toward the live estimate', () => {
+  assert.strictEqual(estimateResponseTokens({ message: { content: '', thinking: 'Let' } }), 1);
+  assert.strictEqual(estimateResponseTokens({ response: '', thinking: 'Hmm' }), 1);
+  assert.strictEqual(estimateResponseTokens({ message: { content: '' } }), 0);
+  assert.strictEqual(estimateResponseTokens({ response: '', done: true }), 0);
+  assert.strictEqual(estimateResponseTokens(null), 0);
+});
+
+test('a large non-streamed body arriving in many newline-free chunks is parsed once', () => {
+  let captured = null;
+  let objects = 0;
+  const p = new OllamaStreamParser(
+    (obj) => (captured = obj),
+    () => objects++,
+  );
+  const body = JSON.stringify({
+    response: 'x'.repeat(200000),
+    done: true,
+    eval_count: 7,
+    eval_duration: 1e9,
+  });
+  for (let i = 0; i < body.length; i += 1000) p.push(body.slice(i, i + 1000));
+  p.end();
+  assert.strictEqual(objects, 1);
+  assert.strictEqual(captured.eval_count, 7);
+});
+
+test('extractFinalStats reports prompt speed and total time when available', () => {
+  const stats = extractFinalStats({
+    eval_count: 10,
+    eval_duration: 1e9,
+    prompt_eval_count: 50,
+    prompt_eval_duration: 5e8,
+    total_duration: 2e9,
+    load_duration: 3e8,
+  });
+  assert.strictEqual(stats.promptTokensPerSec, 100);
+  assert.strictEqual(stats.totalDurationSec, 2);
+  assert.strictEqual(stats.loadDurationSec, 0.3);
+  const cached = extractFinalStats({
+    eval_count: 10,
+    eval_duration: 1e9,
+    prompt_eval_count: 0,
+  });
+  assert.strictEqual(cached.promptTokensPerSec, null);
+});
+
+test('context use is exact from the /api/generate context array, else prompt + output', () => {
+  const gen = extractFinalStats({
+    eval_count: 3,
+    eval_duration: 1e9,
+    prompt_eval_count: 4,
+    context: [1, 2, 3, 4, 5, 6, 7, 8, 9],
+  });
+  assert.strictEqual(gen.contextTokens, 9);
+  assert.strictEqual(gen.contextExact, true);
+  const chat = extractFinalStats({ eval_count: 3, eval_duration: 1e9, prompt_eval_count: 4 });
+  assert.strictEqual(chat.contextTokens, 7);
+  assert.strictEqual(chat.contextExact, false);
+});
+
+test('cached prompt tokens: speed counts only evaluated tokens, context is exact', () => {
+  // Real Ollama 0.40.16 numbers: 223-token prompt, 222 reused from cache.
+  const stats = extractFinalStats({
+    eval_count: 8,
+    eval_duration: 1e8,
+    prompt_eval_count: 223,
+    prompt_eval_cached_count: 222,
+    prompt_eval_duration: 1e7,
+  });
+  assert.strictEqual(stats.promptCachedTokens, 222);
+  assert.strictEqual(stats.promptTokensPerSec, 100); // 1 token / 0.01 s, not 22,300
+  assert.strictEqual(stats.contextTokens, 231);
+  assert.strictEqual(stats.contextExact, true);
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

@@ -1,9 +1,25 @@
+# Development-only files that must not ship in the .vsix.
 icon-build/**
+test/**
+graft/**
+.trail/**
 .kilo/**
 .vscode/**
-test/**
+.claude/**
+node_modules/**
 .vscodeignore
+.gitignore
+.ignore
+package-lock.json
 **/*.map
 **/.DS_Store
+
+# The README loads its screenshots from GitHub, and only the .woff glyph is
+# used at runtime (contributes.icons); the other font formats are build output.
+media/screenshot-*.png
+media/ollama-tracker-103.svg
+media/ollama-tracker-103.ttf
+
+# Shipped on purpose: referenced by the README's universal setup.
 !setup-universal-ollama.sh
-graft/**
+.prettierrc

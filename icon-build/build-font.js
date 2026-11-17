@@ -42,10 +42,7 @@ out.on('finish', () => {
   const replaced = fontSvg.replace(/font-family="[^"]+"/, 'font-family="ollama-tracker"');
   fs.writeFileSync(svgFontPath, replaced, 'utf8');
 
-  const ttf = execFileSync('npx', ['svg2ttf', svgFontPath, ttfPath], { stdio: 'inherit' });
-  if (ttf) {
-  }
-
+  execFileSync('npx', ['svg2ttf', svgFontPath, ttfPath], { stdio: 'inherit' });
   execFileSync('npx', ['ttf2woff', ttfPath, woffPath], { stdio: 'inherit' });
   console.log(`Generated ${woffPath}`);
 });

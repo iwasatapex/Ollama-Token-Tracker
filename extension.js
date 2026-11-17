@@ -1,8 +1,18 @@
 'use strict';
 const vscode = require('vscode');
 const http = require('http');
+const https = require('https');
 const { OllamaProxyCore } = require('./ollama-proxy-core.js');
-const { buildStatusMarkdown, formatBytes, formatProcessor } = require('./status-tooltip.js');
+const {
+  buildStatusMarkdown,
+  formatBytes,
+  formatInt,
+  formatPercent,
+  formatCompact,
+  formatKeepAlive,
+  formatProcessor,
+  formatRate,
+} = require('./status-tooltip.js');
 
 const EXT_ID = '4m4teur.ollama-token-tracker';
 
@@ -12,10 +22,31 @@ let core;
 let outputChannel;
 let extensionVersion = 'unknown';
 let lastRenderKey = null;
+let configRestartTimer = null;
 
-const COLOR_NO_MODEL = '#f14c4c';
-const COLOR_MODEL_LOADED = '#cca700';
-const COLOR_GENERATING = '#89d185';
+// Theme colors rather than hard-coded hex, so the item follows light, dark and
+// high-contrast themes. charts.* are the theme's own red/yellow/green.
+const COLOR_NO_MODEL = 'charts.red';
+const COLOR_MODEL_LOADED = 'charts.yellow';
+const COLOR_GENERATING = 'charts.green';
+// Real faults get a filled background so they are not mistaken for the
+// ordinary red "no model loaded" state.
+const BG_ERROR = 'statusBarItem.errorBackground';
+const BG_WARNING = 'statusBarItem.warningBackground';
+
+const LAST_FINAL_WINDOW_MS = 5 * 60 * 1000;
+const TRANSIENT_ERROR_WINDOW_MS = 60 * 1000;
+const RENDER_INTERVAL_MS = 500;
+// Context fill at which the status bar turns to the warning background.
+const CONTEXT_WARN_PERCENT = 90;
+
+// Shown as links at the bottom of the tooltip, and the only commands the
+// (trusted) tooltip markdown is allowed to invoke.
+const TOOLTIP_COMMANDS = [
+  { title: 'Setup Check', id: 'ollamaTokenTracker.runSetupCheck' },
+  { title: 'Restart', id: 'ollamaTokenTracker.restartProxy' },
+  { title: 'Log', id: 'ollamaTokenTracker.showOutput' },
+];
 
 // The project's own single-color glyph, contributed as an icon by
 // `contributes.icons` in package.json (font at media/ollama-tracker-103.woff,
@@ -28,7 +59,7 @@ function getConfig() {
   const cfg = vscode.workspace.getConfiguration('ollamaTokenTracker');
   return {
     proxyPort: cfg.get('proxyPort', 11434),
-    ollamaUrl: cfg.get('ollamaUrl', 'http://127.0.0.1:11435'),
+    ollamaUrl: String(cfg.get('ollamaUrl', 'http://127.0.0.1:11435')).trim(),
   };
 }
 
@@ -37,129 +68,241 @@ function log(msg) {
   if (outputChannel) outputChannel.appendLine(line);
 }
 
-function markdownTooltip(params) {
-  const markdown = buildStatusMarkdown({
-    status: params.status,
-    model: params.model,
-    size: params.size,
-    vram: params.vram,
-    processor: params.processor,
-    context: params.context,
-    note: params.note,
-    version: extensionVersion,
-  });
-  const tooltip = new vscode.MarkdownString(markdown, true);
+function markdownTooltip(data) {
+  const tooltip = new vscode.MarkdownString(
+    buildStatusMarkdown({
+      ...data,
+      version: extensionVersion,
+      commands: TOOLTIP_COMMANDS,
+    }),
+    true,
+  );
   tooltip.supportHtml = true;
+  tooltip.isTrusted = { enabledCommands: TOOLTIP_COMMANDS.map((c) => c.id) };
   return tooltip;
 }
 
-// Fills `next` ({ text, tooltip, color }) for the current proxy state.
-function computeStatus(next) {
+function modelDetails(s, preferredName) {
+  const models = Array.isArray(s.loadedModels) ? s.loadedModels : [];
+  const nameOf = (m) => m.name || m.model || '';
+  // Describe the model the last generation actually used when it is loaded,
+  // not whichever happens to be first in /api/ps.
+  const model = (preferredName && models.find((m) => nameOf(m) === preferredName)) || models[0];
+  if (!model) {
+    return {
+      model: '—',
+      otherModels: [],
+      size: '—',
+      vram: '—',
+      processor: '—',
+      context: '—',
+    };
+  }
+  const contextSize = Number(model.context_length ?? model.context);
+  const hasSize = Number.isFinite(contextSize) && contextSize > 0;
+  return {
+    model: nameOf(model) || 'Unknown model',
+    otherModels: models.filter((m) => m !== model).map(nameOf),
+    size: formatBytes(Number(model.size)),
+    vram: formatBytes(Number(model.size_vram)),
+    processor: formatProcessor(model),
+    context: hasSize ? formatInt(contextSize) : '—',
+    contextSize: hasSize ? contextSize : null,
+    keepAlive: formatKeepAlive(model.expires_at),
+  };
+}
+
+// Context fill only means something against the window of the model that
+// served the request, so it is null when that model is not (or no longer)
+// the one described.
+function lastSummary(f, details) {
+  const size = details.model === f.model ? details.contextSize : null;
+  return {
+    model: f.model,
+    outputTokens: f.outputTokens,
+    promptTokens: f.promptTokens,
+    promptCachedTokens: f.promptCachedTokens,
+    contextUsed: f.contextTokens,
+    contextExact: !!f.contextExact,
+    contextSize: size,
+    contextPercent:
+      size && Number.isFinite(f.contextTokens) ? (f.contextTokens / size) * 100 : null,
+    tokensPerSec: f.tokensPerSec,
+    promptTokensPerSec: f.promptTokensPerSec,
+    totalDurationSec: f.totalDurationSec,
+  };
+}
+
+// Returns { text, tooltip, color, background } for the current proxy state.
+// Pure apart from reading the clock, and everything in it is serialisable, so
+// render() can compare successive results as strings.
+function computeStatus() {
   const s = core.state;
   const now = Date.now();
+  const recentFinal =
+    s.lastFinal && now - s.lastFinal.finishedAt < LAST_FINAL_WINDOW_MS ? s.lastFinal : null;
+  const details = modelDetails(s, recentFinal && recentFinal.model);
+  const base = {
+    ...details,
+    last: recentFinal ? lastSummary(recentFinal, details) : null,
+    totals: s.totals || null,
+  };
 
-  const model = (s.loadedModels && s.loadedModels[0]) || {};
-  const modelName = model.name || model.model || 'Unknown model';
-  const size = formatBytes(Number(model.size));
-  const vram = formatBytes(Number(model.size_vram));
-  const processor = formatProcessor(model);
-  const context = model.context_length ?? model.context ?? '—';
-
-  if (s.lastError) {
-    next.text = ICON;
-    next.tooltip = {
-      status: 'Error',
-      model: modelName,
-      size,
-      vram,
-      processor,
-      context,
-      note: `${s.lastError.text}: ${s.lastError.detail}`,
+  const err = s.lastError;
+  // A one-off request failure stays visible for a minute, then the regular
+  // state takes over again; a fatal one (port busy, bad URL) stays.
+  const showError = err && (!err.transient || now - (err.at || 0) < TRANSIENT_ERROR_WINDOW_MS);
+  if (showError && !err.transient) {
+    return {
+      text: `${ICON} Error`,
+      tooltip: { ...base, status: 'Error', note: `${err.text}: ${err.detail}` },
+      color: null,
+      background: BG_ERROR,
     };
-    next.color = COLOR_NO_MODEL;
-    return;
   }
 
   if (s.isGenerating) {
-    const elapsedSec = (now - s.currentGen.startedAt) / 1000;
-    const liveTps = elapsedSec > 0 ? (s.currentGen.tokens / elapsedSec).toFixed(1) : '0.0';
-    next.text = `${ICON} ~${s.currentGen.tokens} tok`;
-    next.tooltip = {
-      status: 'Generating',
-      model: modelName,
-      size,
-      vram,
-      processor,
-      context,
-      note: `Live estimate: ~${liveTps} tok/s (estimated from streamed text; exact count shown when done).`,
+    const gen = s.currentGen;
+    const elapsedSec = (now - gen.startedAt) / 1000;
+    const tps = elapsedSec > 0.25 ? gen.tokens / elapsedSec : 0;
+    const count = s.activeGenerations || 1;
+    return {
+      text: `${ICON} ~${formatCompact(gen.tokens)} tok · ${formatRate(tps)} t/s${count > 1 ? ` ×${count}` : ''}`,
+      tooltip: {
+        ...base,
+        status: 'Generating',
+        live: { tokens: gen.tokens, tps, count },
+      },
+      color: COLOR_GENERATING,
+      background: null,
     };
-    next.color = COLOR_GENERATING;
-    return;
   }
 
-  if (s.lastFinal && now - s.lastFinal.finishedAt < 5 * 60 * 1000) {
-    const f = s.lastFinal;
-    next.text = `${ICON} ${f.outputTokens} out / ${f.promptTokens} in`;
-    next.tooltip = {
-      status: 'Ready',
-      model: f.model || modelName,
-      size,
-      vram,
-      processor,
-      context,
-      note: `Last generation: ${f.outputTokens} output tokens • ${f.promptTokens} prompt tokens • ${f.tokensPerSec.toFixed(1)} tok/s`,
+  if (showError) {
+    return {
+      text: ICON,
+      tooltip: {
+        ...base,
+        status: err.text === 'Ollama error' ? 'Generation failed' : 'Request failed',
+        note:
+          err.text === 'Ollama error'
+            ? `Ollama stopped the request: ${err.detail}`
+            : `${err.text}: ${err.detail}. Check that Ollama is running, then try again.`,
+      },
+      color: null,
+      background: BG_WARNING,
     };
-    next.color = s.hasLoadedModel ? COLOR_MODEL_LOADED : COLOR_NO_MODEL;
-    return;
   }
 
-  if (s.hasLoadedModel) {
-    next.text = ICON;
-    next.tooltip = {
-      status: 'Ready',
-      model: modelName,
-      size,
-      vram,
-      processor,
-      context,
-      note: 'No generation has been observed through the proxy yet — token stats will appear here once a request goes through it.',
+  if (s.backendError) {
+    const { ollamaUrl } = getConfig();
+    return {
+      text: ICON,
+      tooltip: {
+        ...base,
+        status: 'Ollama not reachable',
+        note:
+          `Could not reach Ollama at ${ollamaUrl} (${s.backendError}). ` +
+          'Is the Ollama server running and listening there? Run Setup Check for details.',
+      },
+      color: COLOR_NO_MODEL,
+      background: null,
     };
-    next.color = COLOR_MODEL_LOADED;
-    return;
   }
 
-  next.text = ICON;
-  next.tooltip = {
-    status: 'No model loaded',
-    model: '—',
-    size: '—',
-    vram: '—',
-    processor: '—',
-    context: '—',
-    note: 'No model is currently loaded in Ollama.',
+  const status = s.hasLoadedModel ? 'Ready' : 'No model loaded';
+  const color = s.hasLoadedModel ? COLOR_MODEL_LOADED : COLOR_NO_MODEL;
+
+  if (recentFinal) {
+    const f = recentFinal;
+    const pct = base.last.contextPercent;
+    const ctx = pct === null ? '' : ` · ${formatPercent(pct)} ctx`;
+    const nearlyFull = pct !== null && pct >= CONTEXT_WARN_PERCENT;
+    return {
+      text: `${ICON} ${formatCompact(f.outputTokens)} out / ${formatCompact(f.promptTokens)} in · ${formatRate(f.tokensPerSec)} t/s${ctx}`,
+      tooltip: {
+        ...base,
+        status,
+        note: nearlyFull
+          ? `The context window is ${formatPercent(pct)} full. Once it overflows, Ollama ` +
+            'silently drops the oldest part of the prompt — start a new chat or raise num_ctx.'
+          : null,
+      },
+      color,
+      background: nearlyFull ? BG_WARNING : null,
+    };
+  }
+
+  return {
+    text: ICON,
+    tooltip: {
+      ...base,
+      status,
+      note: s.hasLoadedModel
+        ? 'No generation has been seen through the proxy yet. Token stats appear here after the next request.'
+        : 'Ollama is running, but no model is loaded. One loads on the next request.',
+    },
+    color,
+    background: null,
   };
-  next.color = COLOR_NO_MODEL;
 }
 
-// render() runs every 500 ms and on every proxy state change. Only touch the
+// render() runs on a timer and on every proxy state change. Only touch the
 // StatusBarItem when what it shows actually changed: each assignment is an
 // IPC round-trip to the renderer, and while idle nothing changes for hours.
 function render() {
   if (!statusBarItem || !core) return;
-  const next = {};
-  computeStatus(next);
+  const next = computeStatus();
   const key = JSON.stringify(next);
   if (key === lastRenderKey) return;
   lastRenderKey = key;
   statusBarItem.text = next.text;
   statusBarItem.tooltip = markdownTooltip(next.tooltip);
-  statusBarItem.color = next.color;
+  statusBarItem.color = next.color ? new vscode.ThemeColor(next.color) : undefined;
+  statusBarItem.backgroundColor = next.background
+    ? new vscode.ThemeColor(next.background)
+    : undefined;
+  statusBarItem.accessibilityInformation = {
+    role: 'status',
+    label: `Ollama: ${next.tooltip.status}${next.text === ICON ? '' : `, ${next.text.slice(ICON.length).trim()}`}`,
+  };
 }
 
 function startRenderLoop() {
   clearInterval(renderInterval);
-  renderInterval = setInterval(render, 500);
+  // Drives the live token counter while generating and the time-based
+  // transitions (stats window, error expiry). Cheap when nothing changed:
+  // render() bails out before touching the status bar.
+  renderInterval = setInterval(render, RENDER_INTERVAL_MS);
   render();
+}
+
+async function showMenu() {
+  const items = [
+    { label: '$(output) Show Log', command: 'ollamaTokenTracker.showOutput' },
+    {
+      label: '$(checklist) Run Setup Check',
+      command: 'ollamaTokenTracker.runSetupCheck',
+    },
+    {
+      label: '$(debug-restart) Restart Proxy',
+      command: 'ollamaTokenTracker.restartProxy',
+    },
+    { label: '$(link) Show Proxy URL', command: 'ollamaTokenTracker.showProxyUrl' },
+    {
+      label: '$(info) Show Diagnostics',
+      command: 'ollamaTokenTracker.showDiagnostics',
+    },
+    {
+      label: '$(gear) Open Settings',
+      command: 'workbench.action.openSettings',
+      args: ['ollamaTokenTracker'],
+    },
+  ];
+  const pick = await vscode.window.showQuickPick(items, {
+    placeHolder: 'Ollama Token Tracker',
+  });
+  if (pick) vscode.commands.executeCommand(pick.command, ...(pick.args || []));
 }
 
 function activate(context) {
@@ -172,9 +315,17 @@ function activate(context) {
   context.subscriptions.push(outputChannel);
   log(`activating v${extensionVersion} from ${context.extensionPath}`);
 
-  statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  statusBarItem = vscode.window.createStatusBarItem(
+    'ollamaTokenTracker.status',
+    vscode.StatusBarAlignment.Right,
+    100,
+  );
   statusBarItem.name = 'Ollama Token Tracker';
-  statusBarItem.accessibilityInformation = { role: 'status', label: 'Ollama generation status' };
+  statusBarItem.command = 'ollamaTokenTracker.showMenu';
+  statusBarItem.accessibilityInformation = {
+    role: 'status',
+    label: 'Ollama generation status',
+  };
   statusBarItem.show();
   lastRenderKey = null;
   context.subscriptions.push(statusBarItem);
@@ -184,73 +335,68 @@ function activate(context) {
 
   restartEverything();
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand('ollamaTokenTracker.restartProxy', () => {
+  const commands = {
+    'ollamaTokenTracker.restartProxy': () => {
       log('manual restart requested');
       restartEverything();
+    },
+    'ollamaTokenTracker.pointCopilotAtProxy': pointCopilotAtProxy,
+    'ollamaTokenTracker.showProxyUrl': showProxyUrl,
+    'ollamaTokenTracker.showDiagnostics': showDiagnostics,
+    'ollamaTokenTracker.runSetupCheck': runSetupCheck,
+    'ollamaTokenTracker.showMenu': showMenu,
+    'ollamaTokenTracker.showOutput': () => outputChannel.show(true),
+  };
+  for (const [id, fn] of Object.entries(commands)) {
+    context.subscriptions.push(vscode.commands.registerCommand(id, fn));
+  }
+
+  // Apply setting changes without a manual "Restart Proxy". Debounced so
+  // typing a port number in the Settings UI doesn't rebind on every key.
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration('ollamaTokenTracker')) return;
+      clearTimeout(configRestartTimer);
+      configRestartTimer = setTimeout(() => {
+        log('settings changed; restarting proxy');
+        restartEverything();
+      }, 750);
     }),
   );
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand('ollamaTokenTracker.pointCopilotAtProxy', pointCopilotAtProxy),
-  );
+  context.subscriptions.push({ dispose: shutdown });
+}
 
-  context.subscriptions.push(
-    vscode.commands.registerCommand('ollamaTokenTracker.showProxyUrl', showProxyUrl),
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('ollamaTokenTracker.showDiagnostics', showDiagnostics),
-  );
-
-  context.subscriptions.push(
-    vscode.commands.registerCommand('ollamaTokenTracker.runSetupCheck', runSetupCheck),
-  );
-
-  context.subscriptions.push({
-    dispose: () => {
-      if (core) core.stop();
-      clearInterval(renderInterval);
-    },
-  });
+function shutdown() {
+  if (core) core.stop();
+  clearInterval(renderInterval);
+  clearTimeout(configRestartTimer);
 }
 
 function restartEverything() {
   if (core) core.stop();
   const { proxyPort, ollamaUrl } = getConfig();
-  core
-    .start(proxyPort, ollamaUrl)
-    .then(() => {
-      // Sanity-check that the thing we're forwarding to is actually
-      // reachable, so a silent misconfiguration doesn't just sit there
-      // forever as an unexplained red icon.
-      probe(ollamaUrl, '/api/ps').then((r) => {
-        if (!r.ok) {
-          log(`WARNING: configured ollamaUrl ${ollamaUrl} is not reachable: ${r.error}`);
-        }
-      });
-    })
-    .catch((err) => {
-      log(`failed to start proxy on port ${proxyPort}: ${err.message}`);
-      // Loud, actionable, and independent of which port is configured: any
-      // bind failure gets a popup explaining it, instead of only a log line
-      // and an unexplained red icon.
-      vscode.window
-        .showErrorMessage(
-          `Ollama Token Tracker couldn't listen on port ${proxyPort} (${err.message}). ` +
-            `Something else is already using that port — most often the real Ollama server, ` +
-            `a second copy of this extension, or a previous instance that didn't shut down. ` +
-            `Run "Run Setup Check" to see what is answering there, or set ` +
-            `ollamaTokenTracker.proxyPort to a free port and run "Restart Proxy".`,
-          'Run Setup Check',
-          'Open Settings',
-        )
-        .then((choice) => {
-          if (choice === 'Run Setup Check') runSetupCheck();
-          if (choice === 'Open Settings')
-            vscode.commands.executeCommand('workbench.action.openSettings', 'ollamaTokenTracker');
-        });
+  // Backend reachability is reported by the model poll (state.backendError,
+  // logged on every change), so no separate probe is needed here.
+  core.start(proxyPort, ollamaUrl).catch((err) => {
+    log(`failed to start proxy on port ${proxyPort}: ${err.message}`);
+    // Loud and actionable: any start failure gets a popup explaining it,
+    // instead of only a log line and an unexplained red icon.
+    const isBindError = err.code === 'EADDRINUSE' || err.code === 'EACCES';
+    const message = isBindError
+      ? `Ollama Token Tracker couldn't listen on port ${proxyPort} (${err.message}). ` +
+        `Something else is already using that port — most often the real Ollama server, ` +
+        `a second copy of this extension, or a previous instance that didn't shut down. ` +
+        `Run "Run Setup Check" to see what is answering there, or set ` +
+        `ollamaTokenTracker.proxyPort to a free port.`
+      : `Ollama Token Tracker couldn't start its proxy: ${err.message}. ` +
+        `Check the ollamaTokenTracker.proxyPort and ollamaTokenTracker.ollamaUrl settings.`;
+    vscode.window.showErrorMessage(message, 'Run Setup Check', 'Open Settings').then((choice) => {
+      if (choice === 'Run Setup Check') runSetupCheck();
+      if (choice === 'Open Settings')
+        vscode.commands.executeCommand('workbench.action.openSettings', 'ollamaTokenTracker');
     });
+  });
   core.startModelPoll(ollamaUrl, 2000);
   startRenderLoop();
 }
@@ -295,18 +441,18 @@ function probe(url, path) {
       resolve({ ok: false, error: `invalid URL: ${url}` });
       return;
     }
-    const req = http.request(
+    const isHttps = target.protocol === 'https:';
+    const req = (isHttps ? https : http).request(
       {
         hostname: target.hostname,
-        port: target.port || (target.protocol === 'https:' ? 443 : 80),
-        path,
+        port: target.port || (isHttps ? 443 : 80),
+        path: target.pathname.replace(/\/+$/, '') + path,
         method: 'GET',
         timeout: 1500,
       },
       (res) => {
-        let body = '';
-        res.on('data', (c) => (body += c));
-        res.on('end', () => resolve({ ok: true, status: res.statusCode, body }));
+        res.resume();
+        res.on('end', () => resolve({ ok: true, status: res.statusCode }));
       },
     );
     req.on('timeout', () => {
@@ -416,8 +562,7 @@ async function showDiagnostics() {
 }
 
 function deactivate() {
-  if (core) core.stop();
-  clearInterval(renderInterval);
+  shutdown();
 }
 
 module.exports = { activate, deactivate };

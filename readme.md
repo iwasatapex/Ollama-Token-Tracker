@@ -7,11 +7,22 @@ A small, standalone VS Code / VSCodium extension. It puts a compact,
 color-coded llama face in the status bar (bottom right) and reports the
 **exact** token statistics of any Ollama generation that runs through it.
 
-- **Red** — no model is loaded, or something is wrong (hover for the reason).
+- **Red** — no model is loaded, or Ollama itself is not reachable (the tooltip
+  says which).
 - **Yellow** — a model is loaded and idle.
-- **Green** — a generation is in progress right now.
-- **Hover** — model, size, VRAM, processor/GPU split, context length, the last
-  generation's exact token counts, and the running version.
+- **Green** — a generation is in progress, with a live `~tokens · t/s` estimate
+  (and `×2`, `×3`… when several requests run in parallel).
+- **Red/orange background** — a real fault: the proxy could not start (error),
+  or a proxied request just failed (warning, clears itself after a minute).
+- **After a generation** — `123 out / 17 in · 41.0 t/s · 25% ctx`, kept for
+  five minutes. `ctx` is how much of the model's context window that request
+  filled; at 90% or more the item turns orange, because once the window
+  overflows Ollama silently drops the oldest part of the prompt.
+- **Hover** — model, context length, size/VRAM, CPU/GPU split, when Ollama will
+  unload the model, the last generation's exact output/prompt tokens and speeds,
+  context used as `8,192 / 32,768 tokens (25%)` with a meter, total time,
+  session totals, and quick links (Setup Check, Restart, Log).
+- **Click** — a menu with every command.
 
 ## How it works
 
@@ -26,19 +37,23 @@ The proxy forwards every request to `ollamaUrl` untouched. For `/api/generate`
 and `/api/chat` it additionally watches the streamed response as it passes
 through:
 
-- **While generating**, the tooltip shows a live _chunks per second_ estimate.
-  It is explicitly labelled as an estimate and is never presented as a token
-  count.
+- **While generating**, the status bar shows a live token and tokens/s
+  _estimate_ (one per streamed chunk — Ollama streams one token per line —
+  reasoning/"thinking" chunks included; within a token or two of the final
+  count in live testing). It is explicitly labelled as an estimate in the tooltip.
 - **When Ollama sends `done: true`**, the extension reads Ollama's own
   `eval_count`, `eval_duration`, `prompt_eval_count` and `prompt_eval_duration`
   fields and shows the exact, final numbers, for example
-  `Last generation: 123 output tokens • 17 prompt tokens • 41.0 tok/s`. They
+  `Output: 123 tokens · 41.0 tok/s` and `Prompt: 17 tokens`. They
   stay in the tooltip for five minutes. If a `done` object carries no usable
   durations, nothing is recorded — the extension never invents a token count.
 
 Separately, it polls Ollama's own `/api/ps` directly (every 2 seconds, not
-through the proxy) to know whether a model is loaded. That part works with no
-setup at all.
+through the proxy) to know whether a model is loaded — and whether Ollama is
+reachable at all. That part works with no setup at all.
+
+If a client cancels a request (a chat's Stop button), the proxy cancels the
+upstream request too, so Ollama stops generating.
 
 ## Setup
 
@@ -50,34 +65,42 @@ the real Ollama server runs behind it on `11435`. Run
 Every existing Ollama client, including `ollama run`, is tracked without
 changing its endpoint.
 
-For a per-client setup instead, keep the proxy on `11436` and point the client
-at `http://127.0.0.1:11436`:
+For a per-client setup instead, leave Ollama on its default port: set
+`ollamaTokenTracker.proxyPort` to a free port such as `11436` and
+`ollamaTokenTracker.ollamaUrl` to `http://127.0.0.1:11434`, then point each
+client at `http://127.0.0.1:11436`:
 
 - **Copilot Chat** — run **"Ollama Token Tracker: Point Copilot Chat at This
   Proxy"**, then reload the window.
 - **Anything with a configurable Ollama base URL** (Cline, Continue, aider,
   Open WebUI, a `curl` script, an SDK, ...) — run **"Ollama Token Tracker: Show
   Proxy URL"** and point that client at it.
-  Run **"Ollama Token Tracker: Run Setup Check"** at any time — it probes the
-  proxy, the configured backend, and Ollama's usual default port, and prints a
-  plain-English report to the Output panel.
+
+Run **"Ollama Token Tracker: Run Setup Check"** at any time — it probes the
+proxy, the configured backend, and Ollama's usual default port, and prints a
+plain-English report to the Output panel.
 
 ## Commands
 
 | Command                              | What it does                                                                |
 | ------------------------------------ | --------------------------------------------------------------------------- |
-| **Restart Proxy**                    | Restarts the proxy after a settings change.                                 |
+| **Restart Proxy**                    | Restarts the proxy (settings changes already apply automatically).          |
 | **Point Copilot Chat at This Proxy** | Writes Copilot Chat's Ollama endpoint setting. Needs a window reload.       |
 | **Show Proxy URL**                   | Shows/copies the proxy address, for Cline, Continue, aider, etc.            |
 | **Show Diagnostics**                 | Running version, install path, duplicate-install detection, and live state. |
 | **Run Setup Check**                  | Proxy/backend reachability report in the Output panel.                      |
+| **Show Log**                         | Opens the extension's Output panel.                                         |
 
 ## Settings
 
 - `ollamaTokenTracker.proxyPort` (default `11434`) — the port this extension's
   proxy listens on.
 - `ollamaTokenTracker.ollamaUrl` (default `http://127.0.0.1:11435`) — where your
-  real Ollama server actually listens.
+  real Ollama server actually listens. `http` or `https`; a base path (e.g.
+  `https://host/ollama`) is honoured. It must not point at the proxy's own port —
+  the extension refuses that configuration instead of looping forever.
+
+Changes to either setting restart the proxy automatically.
 
 ## Notes
 
@@ -114,12 +137,15 @@ npm test
   that no stats are produced when the duration fields are missing or zero.
 - `test/test-e2e-proxy.js` runs the real proxy against a mock Ollama and
   asserts the captured final stats (`123` output / `17` prompt / ~`41` tok/s),
-  the live `isGenerating` transition, and that an unreachable backend surfaces
-  an error instead of hanging.
+  the live `isGenerating` transition, a `502` (not a hang) when the backend is
+  down, client-abort handling, parallel generations, UTF-8 split across chunks,
+  and the self-proxy loop guard.
 - `test/test-extension-render.js` drives the real `extension.js` through a
   stubbed `vscode` API, asserting the status bar uses the contributed
-  `$(ollama-tracker)` icon and that each state (no model / ready / final stats /
-  generating / error) yields the right color and tooltip content.
+  `$(ollama-tracker)` icon, that each state (no model / backend down / ready /
+  final stats / generating / transient and fatal errors) yields the right
+  color, background and tooltip content, that network text is escaped, and
+  that an unchanged state does not rewrite the status bar.
 
 **Verified:** all three test files pass, and `node --check` succeeds on every
 JavaScript file in the extension.
@@ -131,6 +157,52 @@ Plasma/Wayland), and behavior against a real Ollama installation. That is what
 structured feedback from your actual environment.
 
 ## Changelog
+
+### Unreleased
+
+Found by testing live against Ollama 0.40.16:
+
+- **Fixed:** when Ollama aborted a generation mid-stream (e.g. "prediction
+  aborted, token repeat limit reached") or refused one (unknown model, HTTP
+  404), the icon silently went idle. Ollama's error is now shown.
+- **Fixed:** the live estimate over-counted code by almost 2x (characters ÷ 4);
+  it now counts streamed chunks and lands within a token or two.
+- **Fixed:** prompt speed was absurdly high for cached prompts (it divided the
+  whole prompt by the time spent on the uncached tail). The tooltip now also
+  shows how many prompt tokens were cached.
+
+- **Fixed:** cancelling a request mid-stream (a chat's Stop button) left the
+  icon stuck on green "Generating" until VS Code was restarted.
+- **Fixed:** when Ollama was down, proxied requests never got a response — the
+  client hung until its own timeout and no error was shown. They now get a
+  `502` and the status bar shows the failure.
+- **Fixed:** a single failed request turned the icon red permanently; request
+  errors now clear on the next success or after a minute.
+- **Fixed:** an upstream failure mid-stream appended plain text to the NDJSON
+  body (looking like a clean finish); the connection is now dropped instead.
+- **Fixed:** multi-byte UTF-8 split across network chunks was garbled.
+- **Fixed:** `ollamaUrl` pointing at the proxy's own port made it proxy to
+  itself until sockets ran out; it is now refused with a clear message.
+- **Fixed:** `https` backends were probed over plain HTTP by Setup Check.
+- Shows how full the context window is (status bar `25% ctx`, tooltip meter,
+  warning at 90%+). Exact for `/api/generate`, which returns the context
+  tokens; otherwise prompt + output tokens — exact on Ollama versions that
+  report `prompt_eval_cached_count`, marked `≈` on older ones.
+- Status bar shows tokens/s live and after each generation; large counts are
+  compacted (`18k`). Parallel generations are counted.
+- New "Ollama not reachable" state, distinct from "no model loaded".
+- Tooltip redesigned as tables (markdown collapsed the old space-padding), with
+  prompt speed, total time, keep-alive, other loaded models, session totals and
+  command links. Model details follow the model the last generation used.
+- Colors follow the theme; real faults use the error/warning background.
+- Clicking the item opens a command menu. Settings changes apply immediately.
+- Live token estimate includes reasoning ("thinking") text.
+- Performance: no status bar update per streamed token, no O(n²) re-splitting
+  of large non-streamed bodies, no overlapping `/api/ps` polls.
+- Tooltip text from the network is fully escaped (it is rendered with HTML on).
+- Packaging: `node_modules` is no longer committed; stale root
+  `extension.vsixmanifest` / `[Content_Types].xml` removed; screenshots, build
+  fonts and `.claude/` are excluded from the `.vsix`.
 
 ### 4.0.0
 
